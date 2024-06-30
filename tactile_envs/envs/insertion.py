@@ -25,6 +25,13 @@ def convert_observation_to_space(observation):
                 shape=observation[key].shape,
                 dtype=np.float64,
             )
+        elif "pcd" in key:
+            space.spaces[key] = spaces.Box(
+                low=-float("inf"),
+                high=float("inf"),
+                shape=observation[key].shape,
+                dtype=np.float64,
+            )
 
     return space
 
@@ -114,9 +121,7 @@ class InsertionEnv(gym.Env):
         if self.state_type == "privileged":
             self.curr_obs = {"state": np.zeros(8)}
         elif self.state_type == "vision":
-            self.curr_obs = {
-                "image": np.zeros((self.im_size, self.im_size, 3 * len(camera_idx)))
-            }
+            self.curr_obs = {"image": np.zeros((self.im_size, self.im_size, 3))}
         elif self.state_type == "touch":
             self.curr_obs = {
                 "tactile": np.zeros(
@@ -125,9 +130,16 @@ class InsertionEnv(gym.Env):
             }
         elif self.state_type == "vision_and_touch":
             self.curr_obs = {
-                "image": np.zeros((self.im_size, self.im_size, 3 * len(camera_idx))),
+                "image": np.zeros((self.im_size, self.im_size, 3)),
                 "tactile": np.zeros(
                     (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
+                ),
+            }
+        elif self.state_type == "pcd":
+            self.curr_obs = {
+                "pcd": np.zeros((3, 1024)),
+                "tactile_pcd": np.zeros(
+                    (3 + self.tactile_comps, self.tactile_rows * self.tactile_cols * 2)
                 ),
             }
         else:
@@ -175,6 +187,10 @@ class InsertionEnv(gym.Env):
         self.renderer = mujoco.Renderer(
             self.sim, height=self.im_size, width=self.im_size
         )
+        self.depth_renderer = mujoco.Renderer(
+            self.sim, height=self.im_size, width=self.im_size
+        )
+        self.depth_renderer.enable_depth_rendering()
 
     def update_include_path(self):
         file_idx = self.xml_content.find('<include file="', 0)
@@ -460,9 +476,14 @@ class InsertionEnv(gym.Env):
             self.sim.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
 
         del self.renderer
+        del self.depth_renderer
         self.renderer = mujoco.Renderer(
             self.sim, height=self.im_size, width=self.im_size
         )
+        self.depth_renderer = mujoco.Renderer(
+            self.sim, height=self.im_size, width=self.im_size
+        )
+        self.depth_renderer.enable_depth_rendering()
 
         self.generate_initial_pose()
 
@@ -480,6 +501,20 @@ class InsertionEnv(gym.Env):
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
             self.curr_obs = {"image": img, "tactile": tactiles}
+        elif self.state_type == "pcd":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
+            tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
+            if self.symlog_tactile:
+                tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
+            imgs, depths = self.render(mode="pcd")
+            self.curr_obs = {}
         elif self.state_type == "vision":
             img = self.render()
             self.curr_obs = {"image": img}
@@ -505,15 +540,27 @@ class InsertionEnv(gym.Env):
 
         return self._get_obs(), info
 
-    def render(self):
-        imgs = []
-        for idx in self.camera_idx:
-            self.renderer.update_scene(self.mj_data, camera=idx)
+    def render(self, mode="single_cam"):
+        if mode == "single_cam":
+            self.renderer.update_scene(self.mj_data, camera=0)
             img = self.renderer.render() / 255
-            imgs.append(img)
+            return img
+        elif mode == "pcd":
+            imgs = []
+            depths = []
+            for idx in self.camera_idx:
+                self.renderer.update_scene(self.mj_data, camera=idx)
+                self.depth_renderer.update_scene(self.mj_data, camera=idx)
 
-        img = np.concatenate(imgs, axis=-1)
-        return img
+                img = self.renderer.render() / 255
+                imgs.append(img)
+
+                depth = self.depth_renderer.render()
+                depths.append(depth)
+
+            img = np.concatenate(imgs, axis=-1)
+            depth = np.stack(depths, axis=-1)
+            return img, depth
 
     def step(self, u):
         action = u

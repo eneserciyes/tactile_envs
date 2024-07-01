@@ -1,14 +1,13 @@
 import os
 import cv2
+import numpy as np
+from pathlib import Path
 
 import gymnasium as gym
-
+from gymnasium import spaces
 import mujoco
 
-import numpy as np
-from gymnasium import spaces
-
-from pathlib import Path
+from tactile_envs.utils.mj_pcd import generateCroppedPointCloudAndPoses
 
 
 def convert_observation_to_space(observation):
@@ -137,7 +136,7 @@ class InsertionEnv(gym.Env):
             }
         elif self.state_type == "pcd":
             self.curr_obs = {
-                "pcd": np.zeros((3, 1024)),
+                "pcd": np.zeros((1024, 3)),
                 "tactile_pcd": np.zeros(
                     (3 + self.tactile_comps, self.tactile_rows * self.tactile_cols * 2)
                 ),
@@ -514,7 +513,15 @@ class InsertionEnv(gym.Env):
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             imgs, depths = self.render(mode="pcd")
-            self.curr_obs = {}
+            pcd = generateCroppedPointCloudAndPoses(
+                imgs, depths, bounds=[-2, 2, -2, 2, 0.01, 1]
+            )
+            self.curr_obs = {
+                "pcd": pcd,
+                "tactile_pcd": np.zeros(
+                    (3 + self.tactile_comps, self.tactile_rows * self.tactile_cols * 2)
+                ),
+            }
         elif self.state_type == "vision":
             img = self.render()
             self.curr_obs = {"image": img}
@@ -552,15 +559,13 @@ class InsertionEnv(gym.Env):
                 self.renderer.update_scene(self.mj_data, camera=idx)
                 self.depth_renderer.update_scene(self.mj_data, camera=idx)
 
-                img = self.renderer.render() / 255
+                img = self.renderer.render()
                 imgs.append(img)
 
                 depth = self.depth_renderer.render()
-                depths.append(depth)
+                depths.append(depth.astype(np.float32))
 
-            img = np.concatenate(imgs, axis=-1)
-            depth = np.stack(depths, axis=-1)
-            return img, depth
+            return imgs, depths
 
     def step(self, u):
         action = u
@@ -659,3 +664,11 @@ class InsertionEnv(gym.Env):
         obs = self._get_obs()
 
         return obs, reward, done, False, info
+
+    def close(self):
+        super().close()
+        del self.renderer
+        del self.depth_renderer
+        del self.sim
+        del self.mj_data
+        return

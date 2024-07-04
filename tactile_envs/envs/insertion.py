@@ -375,6 +375,8 @@ class InsertionEnv(gym.Env):
 
         rand_x = np.random.rand() * 0.2 - 0.1
         rand_y = np.random.rand() * 0.2 - 0.1
+        print("rand_x: ", rand_x)
+        print("rand_y: ", rand_y)
         if self.with_rotation:
             rand_yaw = np.random.rand() * 2 * np.pi - np.pi
         else:
@@ -539,9 +541,11 @@ class InsertionEnv(gym.Env):
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             self.curr_obs = {"tactile": tactiles}
         elif self.state_type == "privileged":
-            self.curr_obs = np.append(
-                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
-            )
+            self.curr_obs = {
+                "state": np.append(
+                    self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+                )
+            }
 
         info = {"id": np.array([self.id])}
 

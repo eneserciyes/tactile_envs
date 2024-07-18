@@ -375,8 +375,6 @@ class InsertionEnv(gym.Env):
 
         rand_x = np.random.rand() * 0.2 - 0.1
         rand_y = np.random.rand() * 0.2 - 0.1
-        print("rand_x: ", rand_x)
-        print("rand_y: ", rand_y)
         if self.with_rotation:
             rand_yaw = np.random.rand() * 2 * np.pi - np.pi
         else:
@@ -595,7 +593,6 @@ class InsertionEnv(gym.Env):
 
         self.mj_data.ctrl[:3] = action_unnorm[:3]
 
-        print("action:", self.mj_data.ctrl[:3])
         mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
         pos = self.mj_data.qpos[-7:-4]

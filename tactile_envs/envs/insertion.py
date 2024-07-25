@@ -1,13 +1,15 @@
 import os
 import cv2
-import numpy as np
-from pathlib import Path
 
 import gymnasium as gym
-from gymnasium import spaces
+
 import mujoco
 
-from tactile_envs.utils.mj_pcd import generateCroppedPointCloudAndPoses
+import numpy as np
+from gymnasium import spaces
+import cv2
+
+from pathlib import Path
 
 
 def convert_observation_to_space(observation):
@@ -17,14 +19,12 @@ def convert_observation_to_space(observation):
             space.spaces[key] = spaces.Box(
                 low=0, high=1, shape=observation[key].shape, dtype=np.float64
             )
-        elif key == "tactile" or key == "state":
-            space.spaces[key] = spaces.Box(
-                low=-float("inf"),
-                high=float("inf"),
-                shape=observation[key].shape,
-                dtype=np.float64,
-            )
-        elif "pcd" in key:
+        elif (
+            key == "tactile"
+            or key == "state"
+            or key == "proprioceptive"
+            or key == "privileged"
+        ):
             space.spaces[key] = spaces.Box(
                 low=-float("inf"),
                 high=float("inf"),
@@ -41,7 +41,7 @@ class InsertionEnv(gym.Env):
         no_rotation=True,
         no_gripping=True,
         state_type="vision_and_touch",
-        camera_idx=[0],
+        camera_idx=0,
         symlog_tactile=True,
         env_id=-1,
         im_size=64,
@@ -58,6 +58,11 @@ class InsertionEnv(gym.Env):
             "rhombus",
         ],
         holders=["holder1", "holder2", "holder3"],
+        hole_init_range=0.05,
+        init_gripper_rotation=False,
+        max_rotation=np.pi,
+        control_type=None,
+        max_rotation_delta=None,
     ):
         """
         'no_rotation': if True, the robot will not be able to rotate its wrist
@@ -73,6 +78,7 @@ class InsertionEnv(gym.Env):
         'multiccd': if True, the multiccd flag will be enabled (makes tactile sensing more accurate but slower)
         'objects': list of objects to insert (list from "square", "triangle", "horizontal", "vertical", "trapezoidal", "rhombus")
         'holders': list of holders to insert the objects (list from "holder1", "holder2", "holder3")
+        # TODO: comments for new parameters
         """
 
         super(InsertionEnv, self).__init__()
@@ -115,6 +121,12 @@ class InsertionEnv(gym.Env):
         self.holders = holders
         self.objects = objects
 
+        self.hole_init_range = hole_init_range
+        self.init_gripper_rotation = init_gripper_rotation
+        self.max_rotation = max_rotation
+        self.control_type = control_type
+        self.max_rotation_delta = max_rotation_delta
+
         print("state_type: ", self.state_type)
 
         if self.state_type == "privileged":
@@ -134,12 +146,14 @@ class InsertionEnv(gym.Env):
                     (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
                 ),
             }
-        elif self.state_type == "pcd":
+        elif self.state_type == "full":
             self.curr_obs = {
-                "pcd": np.zeros((1024, 3)),
-                "tactile_pcd": np.zeros(
-                    (3 + self.tactile_comps, self.tactile_rows * self.tactile_cols * 2)
+                "image": np.zeros((self.im_size, self.im_size, 3)),
+                "tactile": np.zeros(
+                    (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
                 ),
+                "privileged": np.zeros(8),
+                "proprioceptive": np.zeros(7),
             }
         else:
             raise ValueError("Invalid state type")
@@ -173,8 +187,14 @@ class InsertionEnv(gym.Env):
             dtype=np.float32,
         )
         self.action_scale = np.array(
-            [[-0.2, 0.2], [-0.2, 0.2], [-0.12, 0.3], [-np.pi, np.pi], [0, 255]]
-        )
+            [
+                [-0.2, 0.2],
+                [-0.2, 0.2],
+                [-0.12, 0.3],
+                [-max_rotation, max_rotation],
+                [0, 255],
+            ]
+        )  # for absolute control
 
         self.action_mask = np.ones(5, dtype=bool)
         if no_rotation:
@@ -186,10 +206,6 @@ class InsertionEnv(gym.Env):
         self.renderer = mujoco.Renderer(
             self.sim, height=self.im_size, width=self.im_size
         )
-        self.depth_renderer = mujoco.Renderer(
-            self.sim, height=self.im_size, width=self.im_size
-        )
-        self.depth_renderer.enable_depth_rendering()
 
     def update_include_path(self):
         file_idx = self.xml_content.find('<include file="', 0)
@@ -347,11 +363,17 @@ class InsertionEnv(gym.Env):
 
             return True
 
-        offset_x = 0.05 * np.random.rand()
-        offset_y = 0.05 * np.random.rand()
+        if self.hole_init_range == 0.05:
+            offset_x = self.hole_init_range * np.random.rand()
+            offset_y = self.hole_init_range * np.random.rand()
+        elif self.hole_init_range == 0.1:
+            offset_x = self.hole_init_range * np.random.rand() - 0.05
+            offset_y = self.hole_init_range * np.random.rand() - 0.02
+        else:
+            raise NotImplementedError
 
         if self.with_rotation:
-            offset_yaw = 2 * np.pi * np.random.rand() - np.pi
+            offset_yaw = 2 * self.max_rotation * np.random.rand() - self.max_rotation
         else:
             offset_yaw = 0.0
 
@@ -375,7 +397,7 @@ class InsertionEnv(gym.Env):
 
         rand_x = np.random.rand() * 0.2 - 0.1
         rand_y = np.random.rand() * 0.2 - 0.1
-        if self.with_rotation:
+        if self.with_rotation and self.init_gripper_rotation:
             rand_yaw = np.random.rand() * 2 * np.pi - np.pi
         else:
             rand_yaw = 0
@@ -385,31 +407,49 @@ class InsertionEnv(gym.Env):
         for i in range(steps_per_phase):  # go on top of object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, cruise_height]
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error = ((self.mj_data.qpos[:3] - self.mj_data.ctrl[:3]) ** 2).sum() ** 0.5
+            # print("phase 1", i, error)
+            if error < 1e-4:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 1 steps:", i)
 
         for i in range(steps_per_phase):  # rotate wrist
             self.mj_data.ctrl[3] = -np.arcsin(self.target_quat[-1]) * 2
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error = abs(-np.arcsin(self.target_quat[-1]) * 2 - self.mj_data.qpos[3])
+            # print("phase 2", i, error)
+            if error < 1e-4:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 2 steps:", i)
 
         for i in range(steps_per_phase):  # move around object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, gripping_height]
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error = ((self.mj_data.qpos[:3] - self.mj_data.ctrl[:3]) ** 2).sum() ** 0.5
+            # print("phase 3", i, error)
+            if error < 1e-4:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 3 steps:", i)
 
-        for i in range(steps_per_phase):  # close gripper
+        for i in range(30):  # for i in range(steps_per_phase): # close gripper
             self.mj_data.ctrl[-1] = self.fixed_gripping
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
             if show_full:
@@ -417,35 +457,59 @@ class InsertionEnv(gym.Env):
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 4 steps:", i)
 
+        # cv2.imwrite(f'./before lift.jpg', self.render() * 255)
         for i in range(steps_per_phase):  # lift object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, cruise_height]
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error1 = ((self.mj_data.qpos[:2] - self.mj_data.ctrl[:2]) ** 2).sum() ** 0.5
+            error2 = abs(self.mj_data.qpos[2] - self.mj_data.ctrl[2])
+            # print("phase 5", i, error1, error2)
+            if error1 < 1e-4 and error2 < 1.2e-2:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 5 steps:", i)
+        # cv2.imwrite(f'./after lift.jpg', self.render() * 255)
 
         for i in range(steps_per_phase):  # rotate in place
             self.mj_data.ctrl[3] = -rand_yaw
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error = abs(-rand_yaw - self.mj_data.qpos[3])
+            # print("phase 6", i, error)
+            if error < 1e-4:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 6 steps:", i)
 
         for i in range(steps_per_phase):  # move to random position
             self.mj_data.ctrl[:3] = [rand_x, rand_y, cruise_height]
             mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
+            error1 = ((self.mj_data.qpos[:2] - self.mj_data.ctrl[:2]) ** 2).sum() ** 0.5
+            error2 = abs(self.mj_data.qpos[2] - self.mj_data.ctrl[2])
+            # print("phase 7", i, error1, error2)
+            if error1 < 1e-4 and error2 < 1.2e-2:
+                break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
                 cv2.imshow("img", img)
                 cv2.waitKey(1)
+        # print("phase 7 steps:", i)
 
         self.prev_action_xyz = np.array([rand_x, rand_y, cruise_height])
+        self.prev_rotation = rand_yaw
 
         pos = self.mj_data.qpos[-7:-4]
 
@@ -455,9 +519,9 @@ class InsertionEnv(gym.Env):
     def _get_obs(self):
         return self.curr_obs
 
-    def get_privileged(self):
-        idxs = [0, 1, 2, 12, 13, 14]
-        return np.append(self.mj_data.qpos[idxs].copy(), [self.offset_x, self.offset_y])
+    # def get_privileged(self): # only for the non-rotation case
+    #     idxs = [0,1,2,12,13,14]
+    #     return np.append(self.mj_data.qpos[idxs].copy(),[self.offset_x,self.offset_y])
 
     def seed(self, seed):
         np.random.seed(seed)
@@ -465,6 +529,7 @@ class InsertionEnv(gym.Env):
     def reset(self, seed=None, options=None):
         if seed is not None:
             np.random.seed(seed)
+            print(f"warning: resetting numpy seed to {seed} in insertion env")
 
         # Reload XML (and update robot)
         self.edit_xml()
@@ -475,14 +540,9 @@ class InsertionEnv(gym.Env):
             self.sim.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
 
         del self.renderer
-        del self.depth_renderer
         self.renderer = mujoco.Renderer(
             self.sim, height=self.im_size, width=self.im_size
         )
-        self.depth_renderer = mujoco.Renderer(
-            self.sim, height=self.im_size, width=self.im_size
-        )
-        self.depth_renderer.enable_depth_rendering()
 
         self.generate_initial_pose()
 
@@ -500,28 +560,6 @@ class InsertionEnv(gym.Env):
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
             self.curr_obs = {"image": img, "tactile": tactiles}
-        elif self.state_type == "pcd":
-            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
-                (3, self.tactile_rows, self.tactile_cols)
-            )
-            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
-            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
-                (3, self.tactile_rows, self.tactile_cols)
-            )
-            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
-            tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
-            if self.symlog_tactile:
-                tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
-            imgs, depths = self.render(mode="pcd")
-            pcd = generateCroppedPointCloudAndPoses(
-                imgs, depths, bounds=[-2, 2, -2, 2, 0.01, 1]
-            )
-            self.curr_obs = {
-                "pcd": pcd,
-                "tactile_pcd": np.zeros(
-                    (3 + self.tactile_comps, self.tactile_rows * self.tactile_cols * 2)
-                ),
-            }
         elif self.state_type == "vision":
             img = self.render()
             self.curr_obs = {"image": img}
@@ -539,61 +577,108 @@ class InsertionEnv(gym.Env):
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             self.curr_obs = {"tactile": tactiles}
         elif self.state_type == "privileged":
-            self.curr_obs = {"state": self.get_privileged()}
+            self.curr_obs = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+        elif self.state_type == "full":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
+            tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
+            if self.symlog_tactile:
+                tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
+            img = self.render()
+            privileged = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+            proprioceptive = self.mj_data.qpos[:4].copy()
+            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (
+                self.action_scale[:3, 1] - self.action_scale[:3, 0]
+            ) * 2 - 1
+            assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
+            self.curr_obs = {
+                "image": img,
+                "tactile": tactiles,
+                "privileged": privileged,
+                "proprioceptive": proprioceptive,
+            }
 
         info = {"id": np.array([self.id])}
 
         return self._get_obs(), info
 
-    def render(self, mode="single_cam"):
-        if mode == "single_cam":
-            self.renderer.update_scene(self.mj_data, camera=0)
+    def render(self, highres=False, height=480, width=480):
+        if highres:
+            del self.renderer
+            self.renderer = mujoco.Renderer(self.sim, height=height, width=width)
+            self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
             img = self.renderer.render() / 255
-            return img
-        elif mode == "pcd":
-            imgs = []
-            depths = []
-            for idx in self.camera_idx:
-                self.renderer.update_scene(self.mj_data, camera=idx)
-                self.depth_renderer.update_scene(self.mj_data, camera=idx)
+            del self.renderer
+            self.renderer = mujoco.Renderer(
+                self.sim, height=self.im_size, width=self.im_size
+            )
+        else:
+            self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
+            img = self.renderer.render() / 255
 
-                img = self.renderer.render()
-                imgs.append(img)
-
-                depth = self.depth_renderer.render()
-                depths.append(depth.astype(np.float32))
-
-            return imgs, depths
+        return img
 
     def step(self, u):
         action = u
         action = np.clip(u, -1.0, 1.0)
 
-        action_unnorm = (action + 1) / 2 * (
-            self.action_scale[:, 1] - self.action_scale[:, 0]
-        ) + self.action_scale[:, 0]
-
-        if self.max_delta is not None:
+        if self.control_type == "absolute":
+            action_unnorm = (action + 1) / 2 * (
+                self.action_scale[:, 1] - self.action_scale[:, 0]
+            ) + self.action_scale[:, 0]
+            if self.max_delta is not None:
+                action_unnorm[:3] = np.clip(
+                    action_unnorm[:3],
+                    self.prev_action_xyz - self.max_delta,
+                    self.prev_action_xyz + self.max_delta,
+                )
+            if self.max_rotation_delta is not None:
+                action_unnorm[3] = np.clip(
+                    action_unnorm[3],
+                    self.prev_rotation - self.max_rotation_delta,
+                    self.prev_rotation + self.max_rotation_delta,
+                )
+            self.prev_action_xyz = action_unnorm[:3]
+            self.prev_rotation = action_unnorm[3]
+        elif self.control_type == "delta":
+            action[:3] = action[:3] * self.max_delta + self.mj_data.qpos[:3].copy()
+            action[3] = (
+                action[3] * self.max_rotation_delta - self.mj_data.qpos[3].copy()
+            )
             action_unnorm = np.clip(
-                action_unnorm[:3],
-                self.prev_action_xyz - self.max_delta,
-                self.prev_action_xyz + self.max_delta,
+                action, self.action_scale[:4, 0], self.action_scale[:4, 1]
             )
 
-        self.prev_action_xyz = action_unnorm
-
-        if self.with_rotation:
-            self.mj_data.ctrl[3] = -action_unnorm[3]
-        else:
-            self.mj_data.ctrl[3] = 0
         if not self.adaptive_gripping:
             self.mj_data.ctrl[-1] = self.fixed_gripping
         else:
             self.mj_data.ctrl[-1] = action_unnorm[-1]
-
-        self.mj_data.ctrl[:3] = action_unnorm[:3]
-
-        mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+        # temp = [] # debug
+        for _ in range(self.skip_frame + 1):
+            if self.with_rotation:
+                self.mj_data.ctrl[3] = (
+                    self.mj_data.qpos[3]
+                    + (-action_unnorm[3] - self.mj_data.qpos[3]) * 8
+                )
+            else:
+                self.mj_data.ctrl[3] = 0
+            self.mj_data.ctrl[:3] = (
+                self.mj_data.qpos[:3] + (action_unnorm[:3] - self.mj_data.qpos[:3]) * 10
+            )
+            mujoco.mj_step(self.sim, self.mj_data, 1)
+            # temp.append(self.mj_data.qpos[0] - action_unnorm[0])
+            # temp.append(self.mj_data.qpos[3] + action_unnorm[3])
+        # print(temp)
 
         pos = self.mj_data.qpos[-7:-4]
         quat = self.mj_data.qpos[-4:]
@@ -648,12 +733,42 @@ class InsertionEnv(gym.Env):
             self.curr_obs = {"tactile": tactiles}
             info = {"id": np.array([self.id])}
         elif self.state_type == "privileged":
-            state = self.get_privileged()
-            self.curr_obs = {"state": state}
+            self.curr_obs = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+            info = {"id": np.array([self.id])}
+        elif self.state_type == "full":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
+            tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
+            if self.symlog_tactile:
+                tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
+            img = self.render()
+            privileged = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+            proprioceptive = self.mj_data.qpos[:4].copy()
+            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (
+                self.action_scale[:3, 1] - self.action_scale[:3, 0]
+            ) * 2 - 1
+            assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
+            self.curr_obs = {
+                "image": img,
+                "tactile": tactiles,
+                "privileged": privileged,
+                "proprioceptive": proprioceptive,
+            }
             info = {"id": np.array([self.id])}
 
         done = np.sqrt(delta_x**2 + delta_y**2 + delta_z**2) < 4e-3
         info["is_success"] = done
+        info["action_unnorm"] = action_unnorm
 
         if done:
             reward = 1000
@@ -661,11 +776,3 @@ class InsertionEnv(gym.Env):
         obs = self._get_obs()
 
         return obs, reward, done, False, info
-
-    def close(self):
-        super().close()
-        del self.renderer
-        del self.depth_renderer
-        del self.sim
-        del self.mj_data
-        return

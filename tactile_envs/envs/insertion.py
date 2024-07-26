@@ -1,5 +1,5 @@
 import os
-import cv2 
+import cv2
 
 import gymnasium as gym
 
@@ -11,26 +11,59 @@ import cv2
 
 from pathlib import Path
 
+
 def convert_observation_to_space(observation):
-    
     space = spaces.Dict(spaces={})
     for key in observation.keys():
-        if key == 'image':
-            space.spaces[key] = spaces.Box(low = 0, high = 1, shape = observation[key].shape, dtype = np.float64)
-        elif key == 'tactile' or key == 'state' or key == 'proprioceptive' or key == 'privileged':
-            space.spaces[key] = spaces.Box(low = -float('inf'), high = float('inf'), shape = observation[key].shape, dtype = np.float64)
-        
+        if key == "image":
+            space.spaces[key] = spaces.Box(
+                low=0, high=1, shape=observation[key].shape, dtype=np.float64
+            )
+        elif (
+            key == "tactile"
+            or key == "state"
+            or key == "proprioceptive"
+            or key == "privileged"
+        ):
+            space.spaces[key] = spaces.Box(
+                low=-float("inf"),
+                high=float("inf"),
+                shape=observation[key].shape,
+                dtype=np.float64,
+            )
+
     return space
 
+
 class InsertionEnv(gym.Env):
-
-    def __init__(self, no_rotation=True, 
-        no_gripping=True, state_type='vision_and_touch', camera_idx=0, symlog_tactile=True, 
-        env_id = -1, im_size=64, tactile_shape=(32,32), skip_frame=10, max_delta=None, multiccd=False,
-        objects = ["square", "triangle", "horizontal", "vertical", "trapezoidal", "rhombus"],
-        holders = ["holder1", "holder2", "holder3"],
-        hole_init_range=0.05, init_gripper_rotation=False, max_rotation=np.pi, control_type=None, max_rotation_delta=None):
-
+    def __init__(
+        self,
+        no_rotation=True,
+        no_gripping=True,
+        state_type="vision_and_touch",
+        camera_idx=0,
+        symlog_tactile=True,
+        env_id=-1,
+        im_size=64,
+        tactile_shape=(32, 32),
+        skip_frame=10,
+        max_delta=None,
+        multiccd=False,
+        objects=[
+            "square",
+            "triangle",
+            "horizontal",
+            "vertical",
+            "trapezoidal",
+            "rhombus",
+        ],
+        holders=["holder1", "holder2", "holder3"],
+        hole_init_range=0.05,
+        init_gripper_rotation=False,
+        max_rotation=np.pi,
+        control_type=None,
+        max_rotation_delta=None,
+    ):
         """
         'no_rotation': if True, the robot will not be able to rotate its wrist
         'no_gripping': if True, the robot will keep the gripper opening at a fixed value
@@ -53,12 +86,16 @@ class InsertionEnv(gym.Env):
         self.id = env_id
 
         self.skip_frame = skip_frame
-        
-        asset_folder = os.path.join(os.path.dirname(os.path.abspath(__file__)), '../assets')
 
-        self.model_path = os.path.join(asset_folder, 'insertion/scene.xml')
-        self.current_dir = os.path.join(Path(__file__).parent.parent.absolute(), 'assets/insertion')
-        with open(self.model_path,"r") as f:
+        asset_folder = os.path.join(
+            os.path.dirname(os.path.abspath(__file__)), "../assets"
+        )
+
+        self.model_path = os.path.join(asset_folder, "insertion/scene.xml")
+        self.current_dir = os.path.join(
+            Path(__file__).parent.parent.absolute(), "assets/insertion"
+        )
+        with open(self.model_path, "r") as f:
             self.xml_content = f.read()
             self.update_include_path()
             self.xml_content_reference = self.xml_content
@@ -69,7 +106,9 @@ class InsertionEnv(gym.Env):
 
         self.max_delta = max_delta
 
-        self.symlog_tactile = symlog_tactile # used to squash tactile values and avoid large spikes
+        self.symlog_tactile = (
+            symlog_tactile  # used to squash tactile values and avoid large spikes
+        )
 
         self.tactile_rows = tactile_shape[0]
         self.tactile_cols = tactile_shape[1]
@@ -90,36 +129,50 @@ class InsertionEnv(gym.Env):
 
         print("state_type: ", self.state_type)
 
-        if self.state_type == 'privileged':
-            self.curr_obs = {'state': np.zeros(8)}
-        elif self.state_type == 'vision':
-            self.curr_obs = {'image': np.zeros((self.im_size, self.im_size, 3))}
-        elif self.state_type == 'touch':
-            self.curr_obs = {'tactile': np.zeros((2 * self.tactile_comps, self.tactile_rows, self.tactile_cols))}
-        elif self.state_type == 'vision_and_touch':
-            self.curr_obs = {'image': np.zeros((self.im_size, self.im_size, 3)), 'tactile': np.zeros((2 * self.tactile_comps, self.tactile_rows, self.tactile_cols))}
-        elif self.state_type == 'full': 
-            self.curr_obs = {'image': np.zeros((self.im_size, self.im_size, 3)), 'tactile': np.zeros((2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)), 'privileged': np.zeros(8), 'proprioceptive': np.zeros(7)}
+        if self.state_type == "privileged":
+            self.curr_obs = {"state": np.zeros(8)}
+        elif self.state_type == "vision":
+            self.curr_obs = {"image": np.zeros((self.im_size, self.im_size, 3))}
+        elif self.state_type == "touch":
+            self.curr_obs = {
+                "tactile": np.zeros(
+                    (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
+                )
+            }
+        elif self.state_type == "vision_and_touch":
+            self.curr_obs = {
+                "image": np.zeros((self.im_size, self.im_size, 3)),
+                "tactile": np.zeros(
+                    (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
+                ),
+            }
+        elif self.state_type == "full":
+            self.curr_obs = {
+                "image": np.zeros((self.im_size, self.im_size, 3)),
+                "tactile": np.zeros(
+                    (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
+                ),
+                "privileged": np.zeros(8),
+                "proprioceptive": np.zeros(7),
+            }
         else:
             raise ValueError("Invalid state type")
-        
+
         self.sim = mujoco.MjModel.from_xml_string(self.xml_content)
         self.mj_data = mujoco.MjData(self.sim)
         if self.multiccd:
             self.sim.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
-
-        
 
         self.init_z = self.mj_data.qpos[-5]
 
         self.adaptive_gripping = not no_gripping
         self.with_rotation = not no_rotation
 
-        self.camera_idx = camera_idx        
-        
+        self.camera_idx = camera_idx
+
         obs_tmp = self._get_obs()
         self.observation_space = convert_observation_to_space(obs_tmp)
-        
+
         self.ndof_u = 5
         if no_rotation:
             self.ndof_u -= 1
@@ -127,9 +180,21 @@ class InsertionEnv(gym.Env):
             self.ndof_u -= 1
 
         print("ndof_u: ", self.ndof_u)
-        
-        self.action_space = spaces.Box(low = np.full(self.ndof_u, -1.), high = np.full(self.ndof_u, 1.), dtype = np.float32)
-        self.action_scale = np.array([[-0.2,0.2],[-0.2,0.2],[-0.12,0.3],[-max_rotation,max_rotation],[0,255]]) # for absolute control
+
+        self.action_space = spaces.Box(
+            low=np.full(self.ndof_u, -1.0),
+            high=np.full(self.ndof_u, 1.0),
+            dtype=np.float32,
+        )
+        self.action_scale = np.array(
+            [
+                [-0.2, 0.2],
+                [-0.2, 0.2],
+                [-0.12, 0.3],
+                [-max_rotation, max_rotation],
+                [0, 255],
+            ]
+        )  # for absolute control
 
         self.action_mask = np.ones(5, dtype=bool)
         if no_rotation:
@@ -137,25 +202,36 @@ class InsertionEnv(gym.Env):
         if no_gripping:
             self.action_mask[4] = False
         self.action_scale = self.action_scale[self.action_mask]
-        
-        self.renderer = mujoco.Renderer(self.sim, height=self.im_size, width=self.im_size)
+
+        self.renderer = mujoco.Renderer(
+            self.sim, height=self.im_size, width=self.im_size
+        )
 
     def update_include_path(self):
-        
         file_idx = self.xml_content.find('<include file="', 0)
         while file_idx != -1:
             file_start_idx = file_idx + len('<include file="')
-            self.xml_content = self.xml_content[:file_start_idx] + self.current_dir + '/' + self.xml_content[file_start_idx:]
+            self.xml_content = (
+                self.xml_content[:file_start_idx]
+                + self.current_dir
+                + "/"
+                + self.xml_content[file_start_idx:]
+            )
 
-            file_idx = self.xml_content.find('<include file="', file_start_idx + len(self.current_dir))
+            file_idx = self.xml_content.find(
+                '<include file="', file_start_idx + len(self.current_dir)
+            )
 
         file_idx = self.xml_content.find('meshdir="', 0)
         file_start_idx = file_idx + len('meshdir="')
-        self.xml_content = self.xml_content[:file_start_idx] + self.current_dir + '/' + self.xml_content[file_start_idx:]
-
+        self.xml_content = (
+            self.xml_content[:file_start_idx]
+            + self.current_dir
+            + "/"
+            + self.xml_content[file_start_idx:]
+        )
 
     def edit_xml(self):
-        
         holders = self.holders
         objects = self.objects
 
@@ -164,9 +240,9 @@ class InsertionEnv(gym.Env):
         def edit_attribute(attribute, offset_x, offset_y, offset_yaw, holder, object):
             box_idx = self.xml_content.find('<body name="' + attribute + '"')
             if box_idx == -1:
-                 print("ERROR: Could not find joint name: " + attribute)
-                 return False
-            
+                print("ERROR: Could not find joint name: " + attribute)
+                return False
+
             pos_key = 'pos="'
             pos_idx = box_idx + self.xml_content[box_idx:].find(pos_key)
             pos_start_idx = pos_idx + len(pos_key)
@@ -174,74 +250,132 @@ class InsertionEnv(gym.Env):
 
             pos = self.xml_content[pos_start_idx:pos_end_idx].split(" ")
             correction_rot = np.array([float(pos[0]), float(pos[1])])
-            rotMatrix = np.array([[np.cos(offset_yaw), -np.sin(offset_yaw)], 
-                         [np.sin(offset_yaw),  np.cos(offset_yaw)]])
+            rotMatrix = np.array(
+                [
+                    [np.cos(offset_yaw), -np.sin(offset_yaw)],
+                    [np.sin(offset_yaw), np.cos(offset_yaw)],
+                ]
+            )
             correction_rot = rotMatrix.dot(correction_rot)
-            
-            new_pos = [str(offset_x + correction_rot[0]), str(offset_y + correction_rot[1]), str(float(pos[2]))]
+
+            new_pos = [
+                str(offset_x + correction_rot[0]),
+                str(offset_y + correction_rot[1]),
+                str(float(pos[2])),
+            ]
             new_pos_str = " ".join(new_pos)
-            
-            self.xml_content = self.xml_content[:pos_start_idx] + new_pos_str + self.xml_content[pos_end_idx:]
+
+            self.xml_content = (
+                self.xml_content[:pos_start_idx]
+                + new_pos_str
+                + self.xml_content[pos_end_idx:]
+            )
 
             euler_key = 'axisangle="'
             euler_idx = box_idx + self.xml_content[box_idx:].find(euler_key)
             euler_start_idx = euler_idx + len(euler_key)
-            euler_end_idx = euler_start_idx + self.xml_content[euler_start_idx:].find('"')
+            euler_end_idx = euler_start_idx + self.xml_content[euler_start_idx:].find(
+                '"'
+            )
 
             euler = self.xml_content[euler_start_idx:euler_end_idx].split(" ")
-            new_euler = [str(float(euler[0])), str(float(euler[1])), str(float(euler[2])), str(float(euler[3]) + offset_yaw)]
+            new_euler = [
+                str(float(euler[0])),
+                str(float(euler[1])),
+                str(float(euler[2])),
+                str(float(euler[3]) + offset_yaw),
+            ]
             new_euler_str = " ".join(new_euler)
-            
-            self.xml_content = self.xml_content[:euler_start_idx] + new_euler_str + self.xml_content[euler_end_idx:]
-            
-            if attribute == 'object':
-                for key in ['peg_visual', 'peg_collision']:
-                    key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find('name="' + key + '"')
+
+            self.xml_content = (
+                self.xml_content[:euler_start_idx]
+                + new_euler_str
+                + self.xml_content[euler_end_idx:]
+            )
+
+            if attribute == "object":
+                for key in ["peg_visual", "peg_collision"]:
+                    key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find(
+                        'name="' + key + '"'
+                    )
                     key_end_idx = key_idx + len('name="' + key + '"')
-            
-                    mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find('mesh="')
+
+                    mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find(
+                        'mesh="'
+                    )
                     mesh_start_idx = mesh_idx + len('mesh="')
-                    mesh_end_idx = mesh_start_idx + self.xml_content[mesh_start_idx:].find('"')
+                    mesh_end_idx = mesh_start_idx + self.xml_content[
+                        mesh_start_idx:
+                    ].find('"')
 
-                    self.xml_content = self.xml_content[:mesh_start_idx] + object + self.xml_content[mesh_end_idx:]
+                    self.xml_content = (
+                        self.xml_content[:mesh_start_idx]
+                        + object
+                        + self.xml_content[mesh_end_idx:]
+                    )
 
-                for key in ['holder_visual', 'holder_collision']:
-                    key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find('name="' + key + '"')
+                for key in ["holder_visual", "holder_collision"]:
+                    key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find(
+                        'name="' + key + '"'
+                    )
                     key_end_idx = key_idx + len('name="' + key + '"')
-                    
-                    mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find('mesh="')
-                    mesh_start_idx = mesh_idx + len('mesh="')
-                    mesh_end_idx = mesh_start_idx + self.xml_content[mesh_start_idx:].find('"')
 
-                    self.xml_content = self.xml_content[:mesh_start_idx] + holder + self.xml_content[mesh_end_idx:]
-                    
+                    mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find(
+                        'mesh="'
+                    )
+                    mesh_start_idx = mesh_idx + len('mesh="')
+                    mesh_end_idx = mesh_start_idx + self.xml_content[
+                        mesh_start_idx:
+                    ].find('"')
+
+                    self.xml_content = (
+                        self.xml_content[:mesh_start_idx]
+                        + holder
+                        + self.xml_content[mesh_end_idx:]
+                    )
+
             else:
-                for i in range(1,5):
-                    for key in ['wall{}_visual'.format(i), 'wall{}_collision'.format(i)]:
-                        key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find('name="' + key + '"')
+                for i in range(1, 5):
+                    for key in [
+                        "wall{}_visual".format(i),
+                        "wall{}_collision".format(i),
+                    ]:
+                        key_idx = euler_end_idx + self.xml_content[euler_end_idx:].find(
+                            'name="' + key + '"'
+                        )
                         key_end_idx = key_idx + len('name="' + key + '"')
-                    
-                        mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find('mesh="')
-                        mesh_start_idx = mesh_idx + len('mesh="')
-                        mesh_end_idx = mesh_start_idx + self.xml_content[mesh_start_idx:].find('"')
 
-                        self.xml_content = self.xml_content[:mesh_start_idx] + object + '_wall' + str(i) + self.xml_content[mesh_end_idx:]
-                
+                        mesh_idx = key_end_idx + self.xml_content[key_end_idx:].find(
+                            'mesh="'
+                        )
+                        mesh_start_idx = mesh_idx + len('mesh="')
+                        mesh_end_idx = mesh_start_idx + self.xml_content[
+                            mesh_start_idx:
+                        ].find('"')
+
+                        self.xml_content = (
+                            self.xml_content[:mesh_start_idx]
+                            + object
+                            + "_wall"
+                            + str(i)
+                            + self.xml_content[mesh_end_idx:]
+                        )
+
             return True
-            
+
         if self.hole_init_range == 0.05:
-            offset_x = self.hole_init_range*np.random.rand()
-            offset_y = self.hole_init_range*np.random.rand()
+            offset_x = self.hole_init_range * np.random.rand()
+            offset_y = self.hole_init_range * np.random.rand()
         elif self.hole_init_range == 0.1:
-            offset_x = self.hole_init_range*np.random.rand() - 0.05
-            offset_y = self.hole_init_range*np.random.rand() - 0.02
+            offset_x = self.hole_init_range * np.random.rand() - 0.05
+            offset_y = self.hole_init_range * np.random.rand() - 0.02
         else:
             raise NotImplementedError
 
         if self.with_rotation:
-            offset_yaw = 2*self.max_rotation*np.random.rand()-self.max_rotation
+            offset_yaw = 2 * self.max_rotation * np.random.rand() - self.max_rotation
         else:
-            offset_yaw = 0.
+            offset_yaw = 0.0
 
         holder = np.random.choice(holders)
         object = np.random.choice(objects)
@@ -251,27 +385,28 @@ class InsertionEnv(gym.Env):
 
         self.offset_x = offset_x
         self.offset_y = offset_y
-        self.target_quat = np.array([np.cos(offset_yaw/2), 0, 0, np.sin(offset_yaw/2)])
+        self.target_quat = np.array(
+            [np.cos(offset_yaw / 2), 0, 0, np.sin(offset_yaw / 2)]
+        )
 
     def generate_initial_pose(self, show_full=False):
-        
-        cruise_height = 0.
+        cruise_height = 0.0
         gripping_height = -0.11
-        
+
         mujoco.mj_resetData(self.sim, self.mj_data)
 
-        rand_x = np.random.rand()*0.2 - 0.1
-        rand_y = np.random.rand()*0.2 - 0.1
+        rand_x = np.random.rand() * 0.2 - 0.1
+        rand_y = np.random.rand() * 0.2 - 0.1
         if self.with_rotation and self.init_gripper_rotation:
-            rand_yaw = np.random.rand()*2*np.pi - np.pi
+            rand_yaw = np.random.rand() * 2 * np.pi - np.pi
         else:
             rand_yaw = 0
 
         steps_per_phase = 60
 
-        for i in range(steps_per_phase): # go on top of object
+        for i in range(steps_per_phase):  # go on top of object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, cruise_height]
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
             error = ((self.mj_data.qpos[:3] - self.mj_data.ctrl[:3]) ** 2).sum() ** 0.5
             # print("phase 1", i, error)
@@ -280,29 +415,29 @@ class InsertionEnv(gym.Env):
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 1 steps:", i)
 
-        for i in range(steps_per_phase): # rotate wrist
-            self.mj_data.ctrl[3] = -np.arcsin(self.target_quat[-1])*2
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+        for i in range(steps_per_phase):  # rotate wrist
+            self.mj_data.ctrl[3] = -np.arcsin(self.target_quat[-1]) * 2
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
-            error = abs(-np.arcsin(self.target_quat[-1])*2 - self.mj_data.qpos[3])
+            error = abs(-np.arcsin(self.target_quat[-1]) * 2 - self.mj_data.qpos[3])
             # print("phase 2", i, error)
             if error < 1e-4:
                 break
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 2 steps:", i)
-            
-        for i in range(steps_per_phase): # move around object
+
+        for i in range(steps_per_phase):  # move around object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, gripping_height]
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
-            
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
+
             error = ((self.mj_data.qpos[:3] - self.mj_data.ctrl[:3]) ** 2).sum() ** 0.5
             # print("phase 3", i, error)
             if error < 1e-4:
@@ -310,24 +445,24 @@ class InsertionEnv(gym.Env):
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 3 steps:", i)
-            
-        for i in range(30): # for i in range(steps_per_phase): # close gripper
+
+        for i in range(30):  # for i in range(steps_per_phase): # close gripper
             self.mj_data.ctrl[-1] = self.fixed_gripping
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 4 steps:", i)
-            
+
         # cv2.imwrite(f'./before lift.jpg', self.render() * 255)
-        for i in range(steps_per_phase): # lift object
+        for i in range(steps_per_phase):  # lift object
             self.mj_data.ctrl[:3] = [self.offset_x, self.offset_y, cruise_height]
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
             error1 = ((self.mj_data.qpos[:2] - self.mj_data.ctrl[:2]) ** 2).sum() ** 0.5
             error2 = abs(self.mj_data.qpos[2] - self.mj_data.ctrl[2])
@@ -337,15 +472,14 @@ class InsertionEnv(gym.Env):
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 5 steps:", i)
         # cv2.imwrite(f'./after lift.jpg', self.render() * 255)
 
-        
-        for i in range(steps_per_phase): # rotate in place
+        for i in range(steps_per_phase):  # rotate in place
             self.mj_data.ctrl[3] = -rand_yaw
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
             error = abs(-rand_yaw - self.mj_data.qpos[3])
             # print("phase 6", i, error)
@@ -354,13 +488,13 @@ class InsertionEnv(gym.Env):
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 6 steps:", i)
-            
-        for i in range(steps_per_phase): # move to random position
+
+        for i in range(steps_per_phase):  # move to random position
             self.mj_data.ctrl[:3] = [rand_x, rand_y, cruise_height]
-            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame+1)
+            mujoco.mj_step(self.sim, self.mj_data, self.skip_frame + 1)
 
             error1 = ((self.mj_data.qpos[:2] - self.mj_data.ctrl[:2]) ** 2).sum() ** 0.5
             error2 = abs(self.mj_data.qpos[2] - self.mj_data.ctrl[2])
@@ -370,7 +504,7 @@ class InsertionEnv(gym.Env):
             if show_full:
                 self.renderer.update_scene(self.mj_data, camera=0)
                 img = cv2.cvtColor(self.renderer.render(), cv2.COLOR_BGR2RGB)
-                cv2.imshow('img', img)
+                cv2.imshow("img", img)
                 cv2.waitKey(1)
         # print("phase 7 steps:", i)
 
@@ -378,115 +512,152 @@ class InsertionEnv(gym.Env):
         self.prev_rotation = rand_yaw
 
         pos = self.mj_data.qpos[-7:-4]
-        
-        if pos[2] < (cruise_height - gripping_height)/2:
-            print('Failed to grasp')
+
+        if pos[2] < (cruise_height - gripping_height) / 2:
+            print("Failed to grasp")
 
     def _get_obs(self):
         return self.curr_obs
-    
+
     # def get_privileged(self): # only for the non-rotation case
     #     idxs = [0,1,2,12,13,14]
     #     return np.append(self.mj_data.qpos[idxs].copy(),[self.offset_x,self.offset_y])
-    
+
     def seed(self, seed):
         np.random.seed(seed)
-    
-    def reset(self, seed=None, options=None):
 
+    def reset(self, seed=None, options=None):
         if seed is not None:
             np.random.seed(seed)
             print(f"warning: resetting numpy seed to {seed} in insertion env")
-        
+
         # Reload XML (and update robot)
         self.edit_xml()
         self.sim = mujoco.MjModel.from_xml_string(self.xml_content)
-        
+
         self.mj_data = mujoco.MjData(self.sim)
         if self.multiccd:
-            self.sim.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD 
-        
+            self.sim.opt.enableflags |= mujoco.mjtEnableBit.mjENBL_MULTICCD
+
         del self.renderer
-        self.renderer = mujoco.Renderer(self.sim, height=self.im_size, width=self.im_size)
-        
+        self.renderer = mujoco.Renderer(
+            self.sim, height=self.im_size, width=self.im_size
+        )
+
         self.generate_initial_pose()
 
-        if self.state_type == 'vision_and_touch': 
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_right = tactiles_right[[1, 2, 0]] # zxy -> xyz
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_left = tactiles_left[[1, 2, 0]] # zxy -> xyz
+        if self.state_type == "vision_and_touch":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            self.curr_obs = {'image': img, 'tactile': tactiles}
-        elif self.state_type == 'vision':
+            self.curr_obs = {"image": img, "tactile": tactiles}
+        elif self.state_type == "vision":
             img = self.render()
-            self.curr_obs = {'image': img}
-        elif self.state_type == 'touch':
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_right = tactiles_right[[1, 2, 0]] # zxy -> xyz
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_left = tactiles_left[[1, 2, 0]] # zxy -> xyz
+            self.curr_obs = {"image": img}
+        elif self.state_type == "touch":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
-            self.curr_obs = {'tactile': tactiles}
-        elif self.state_type == 'privileged':
-            self.curr_obs = np.append(self.mj_data.qpos.copy(),[self.offset_x,self.offset_y])
-        elif self.state_type == 'full': 
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_right = tactiles_right[[1, 2, 0]] # zxy -> xyz
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_left = tactiles_left[[1, 2, 0]] # zxy -> xyz
+            self.curr_obs = {"tactile": tactiles}
+        elif self.state_type == "privileged":
+            self.curr_obs = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+        elif self.state_type == "full":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            privileged = np.append(self.mj_data.qpos.copy(),[self.offset_x,self.offset_y])
+            privileged = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
             proprioceptive = self.mj_data.qpos[:4].copy()
-            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (self.action_scale[:3, 1] - self.action_scale[:3, 0]) * 2 - 1
+            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (
+                self.action_scale[:3, 1] - self.action_scale[:3, 0]
+            ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
-            self.curr_obs = {'image': img, 'tactile': tactiles, 'privileged': privileged, 'proprioceptive': proprioceptive}
-        
-        info = {'id': np.array([self.id])}
+            self.curr_obs = {
+                "image": img,
+                "tactile": tactiles,
+                "privileged": privileged,
+                "proprioceptive": proprioceptive,
+            }
+
+        info = {"id": np.array([self.id])}
 
         return self._get_obs(), info
 
-
     def render(self, highres=False, height=480, width=480):
-        
         if highres:
             del self.renderer
             self.renderer = mujoco.Renderer(self.sim, height=height, width=width)
             self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
-            img = self.renderer.render()/255
+            img = self.renderer.render() / 255
             del self.renderer
-            self.renderer = mujoco.Renderer(self.sim, height=self.im_size, width=self.im_size)
+            self.renderer = mujoco.Renderer(
+                self.sim, height=self.im_size, width=self.im_size
+            )
         else:
             self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
-            img = self.renderer.render()/255
+            img = self.renderer.render() / 255
 
         return img
 
     def step(self, u):
-
         action = u
-        action = np.clip(u, -1., 1.)
-        
-        if self.control_type == 'absolute':
-            action_unnorm = (action + 1)/2 * (self.action_scale[:,1]-self.action_scale[:,0]) + self.action_scale[:,0]
+        action = np.clip(u, -1.0, 1.0)
+
+        if self.control_type == "absolute":
+            action_unnorm = (action + 1) / 2 * (
+                self.action_scale[:, 1] - self.action_scale[:, 0]
+            ) + self.action_scale[:, 0]
             if self.max_delta is not None:
-                action_unnorm[:3] = np.clip(action_unnorm[:3], self.prev_action_xyz - self.max_delta, self.prev_action_xyz + self.max_delta)
+                action_unnorm[:3] = np.clip(
+                    action_unnorm[:3],
+                    self.prev_action_xyz - self.max_delta,
+                    self.prev_action_xyz + self.max_delta,
+                )
             if self.max_rotation_delta is not None:
-                action_unnorm[3] = np.clip(action_unnorm[3], self.prev_rotation - self.max_rotation_delta, self.prev_rotation + self.max_rotation_delta)
+                action_unnorm[3] = np.clip(
+                    action_unnorm[3],
+                    self.prev_rotation - self.max_rotation_delta,
+                    self.prev_rotation + self.max_rotation_delta,
+                )
             self.prev_action_xyz = action_unnorm[:3]
             self.prev_rotation = action_unnorm[3]
-        elif self.control_type == 'delta':
+        elif self.control_type == "delta":
             action[:3] = action[:3] * self.max_delta + self.mj_data.qpos[:3].copy()
-            action[3] = action[3] * self.max_rotation_delta - self.mj_data.qpos[3].copy()
-            action_unnorm = np.clip(action, self.action_scale[:4,0], self.action_scale[:4,1])
+            action[3] = (
+                action[3] * self.max_rotation_delta - self.mj_data.qpos[3].copy()
+            )
+            action_unnorm = np.clip(
+                action, self.action_scale[:4, 0], self.action_scale[:4, 1]
+            )
 
         if not self.adaptive_gripping:
             self.mj_data.ctrl[-1] = self.fixed_gripping
@@ -495,10 +666,15 @@ class InsertionEnv(gym.Env):
         # temp = [] # debug
         for _ in range(self.skip_frame + 1):
             if self.with_rotation:
-                self.mj_data.ctrl[3] = self.mj_data.qpos[3] + (-action_unnorm[3] - self.mj_data.qpos[3]) * 8
+                self.mj_data.ctrl[3] = (
+                    self.mj_data.qpos[3]
+                    + (-action_unnorm[3] - self.mj_data.qpos[3]) * 8
+                )
             else:
                 self.mj_data.ctrl[3] = 0
-            self.mj_data.ctrl[:3] = self.mj_data.qpos[:3] + (action_unnorm[:3] - self.mj_data.qpos[:3]) * 10
+            self.mj_data.ctrl[:3] = (
+                self.mj_data.qpos[:3] + (action_unnorm[:3] - self.mj_data.qpos[:3]) * 10
+            )
             mujoco.mj_step(self.sim, self.mj_data, 1)
             # temp.append(self.mj_data.qpos[0] - action_unnorm[0])
             # temp.append(self.mj_data.qpos[3] + action_unnorm[3])
@@ -506,61 +682,93 @@ class InsertionEnv(gym.Env):
 
         pos = self.mj_data.qpos[-7:-4]
         quat = self.mj_data.qpos[-4:]
-        
+
         delta_x = pos[0] - self.offset_x
         delta_y = pos[1] - self.offset_y
         delta_z = pos[2] - self.init_z
         delta_quat = np.linalg.norm(quat - self.target_quat)
 
-        reward = - np.log(100*np.sqrt(delta_x**2 + delta_y**2 + delta_z**2 + int(self.with_rotation)*delta_quat**2) + 1)
-        
-        if self.state_type == 'vision_and_touch': 
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_right = tactiles_right[[1, 2, 0]] # zxy -> xyz
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_left = tactiles_left[[1, 2, 0]] # zxy -> xyz
+        reward = -np.log(
+            100
+            * np.sqrt(
+                delta_x**2
+                + delta_y**2
+                + delta_z**2
+                + int(self.with_rotation) * delta_quat**2
+            )
+            + 1
+        )
+
+        if self.state_type == "vision_and_touch":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            self.curr_obs = {'image': img, 'tactile': tactiles}
-            info = {'id': np.array([self.id])}
-        elif self.state_type == 'vision':
+            self.curr_obs = {"image": img, "tactile": tactiles}
+            info = {"id": np.array([self.id])}
+        elif self.state_type == "vision":
             img = self.render()
-            self.curr_obs = {'image': img}
-            info = {'id': np.array([self.id])}
-        elif self.state_type == 'touch':
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
+            self.curr_obs = {"image": img}
+            info = {"id": np.array([self.id])}
+        elif self.state_type == "touch":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
             tactiles_right = tactiles_right[[1, 2, 0]]
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
             tactiles_left = tactiles_left[[1, 2, 0]]
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
-            self.curr_obs = {'tactile': tactiles}
-            info = {'id': np.array([self.id])}
-        elif self.state_type == 'privileged':
-            self.curr_obs = np.append(self.mj_data.qpos.copy(),[self.offset_x,self.offset_y])
-            info = {'id': np.array([self.id])}
-        elif self.state_type == 'full': 
-            tactiles_right = self.mj_data.sensor('touch_right').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_right = tactiles_right[[1, 2, 0]] # zxy -> xyz
-            tactiles_left = self.mj_data.sensor('touch_left').data.reshape((3, self.tactile_rows, self.tactile_cols))
-            tactiles_left = tactiles_left[[1, 2, 0]] # zxy -> xyz
+            self.curr_obs = {"tactile": tactiles}
+            info = {"id": np.array([self.id])}
+        elif self.state_type == "privileged":
+            self.curr_obs = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
+            info = {"id": np.array([self.id])}
+        elif self.state_type == "full":
+            tactiles_right = self.mj_data.sensor("touch_right").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_right = tactiles_right[[1, 2, 0]]  # zxy -> xyz
+            tactiles_left = self.mj_data.sensor("touch_left").data.reshape(
+                (3, self.tactile_rows, self.tactile_cols)
+            )
+            tactiles_left = tactiles_left[[1, 2, 0]]  # zxy -> xyz
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            privileged = np.append(self.mj_data.qpos.copy(),[self.offset_x,self.offset_y])
+            privileged = np.append(
+                self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
+            )
             proprioceptive = self.mj_data.qpos[:4].copy()
-            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (self.action_scale[:3, 1] - self.action_scale[:3, 0]) * 2 - 1
+            proprioceptive[:3] = (proprioceptive[:3] - self.action_scale[:3, 0]) / (
+                self.action_scale[:3, 1] - self.action_scale[:3, 0]
+            ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
-            self.curr_obs = {'image': img, 'tactile': tactiles, 'privileged': privileged, 'proprioceptive': proprioceptive}
-            info = {'id': np.array([self.id])}
+            self.curr_obs = {
+                "image": img,
+                "tactile": tactiles,
+                "privileged": privileged,
+                "proprioceptive": proprioceptive,
+            }
+            info = {"id": np.array([self.id])}
 
         done = np.sqrt(delta_x**2 + delta_y**2 + delta_z**2) < 4e-3
-        info['is_success'] = done
-        info['action_unnorm'] = action_unnorm
+        info["is_success"] = done
+        info["action_unnorm"] = action_unnorm
 
         if done:
             reward = 1000
@@ -568,4 +776,3 @@ class InsertionEnv(gym.Env):
         obs = self._get_obs()
 
         return obs, reward, done, False, info
-        

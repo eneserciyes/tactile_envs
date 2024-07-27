@@ -643,11 +643,30 @@ class InsertionEnv(gym.Env):
 
         return imgs, depths
 
-    def render_pcd(self, imgs, depths, Ks, Ts):
+    def render_pcd(self, lo_crop, hi_crop):
+        # render images, depths
+        imgs = []
+        depths = []
+        for i in range(4):
+            self.renderer.update_scene(self.mj_data, camera=i)
+            img = self.renderer.render() / 255
+            imgs.append(img)
+
+        self.renderer.enable_depth_rendering()
+        for i in range(4):
+            self.renderer.update_scene(self.mj_data, camera=i)
+            depth = self.renderer.render()
+            depths.append(depth)
+        self.renderer.disable_depth_rendering()
+
+        # get cam matrices
+        Ks, Ts = self.get_cam_info(self.im_size)
+
+        # generate pcds and merge
         merged_points = []
         merged_colors = []
         for img, depth, K, T in zip(imgs, depths, Ks, Ts):
-            points, colors = self.get_pcd(img, depth, K, T)
+            points, colors = self.get_pcd(img, depth, K, T, lo_crop, hi_crop)
             merged_points.append(points)
             merged_colors.append(colors)
 
@@ -655,7 +674,33 @@ class InsertionEnv(gym.Env):
             merged_colors, axis=0
         )
 
-    def get_pcd(self, img, depth, K, T):
+    def get_cam_info(self, img_size=256):
+        cam_intrinsics = []
+        cam_extrinsics = []
+        T_mujoco_proj = np.array(
+            [[1, 0, 0, 0], [0, -1, 0, 0], [0, 0, -1, 0], [0, 0, 0, 1]]
+        )
+
+        for i in range(4):
+            fovy_radians = np.radians(self.sim.cam_fovy[i])
+            f = 0.5 * img_size / np.tan(fovy_radians / 2)
+            K = np.array([[f, 0, img_size / 2], [0, f, img_size / 2], [0, 0, 1]])
+            cam_intrinsics.append(K)
+
+        for i in range(4):
+            pos = self.mj_data.cam_xpos[i]
+            rot = self.mj_data.cam_xmat[i].reshape((3, 3))
+            T_W_mujoco = np.eye(4, 4)
+            T_W_mujoco[:3, :3] = rot
+            T_W_mujoco[:3, 3] = pos
+            cam_extrinsics.append(T_W_mujoco @ T_mujoco_proj)
+
+        return cam_intrinsics, cam_extrinsics
+
+    def get_pcd(self, img, depth, K, T, lo_crop=None, hi_crop=None, n_sample=None):
+        # TODO: implement sampling
+
+        # img : (H, W, 3)
         H, W, _ = img.shape
         u, v = np.meshgrid(np.arange(W), np.arange(H))
 
@@ -673,9 +718,21 @@ class InsertionEnv(gym.Env):
         points = np.vstack((X, Y, Z)).T
         colors = img.reshape(-1, 3)
 
-        points_world = transform_points(points, T)
+        points = transform_points(points, T)
 
-        return points_world, colors
+        if lo_crop is not None and hi_crop is not None:
+            lo_crop = np.array(lo_crop).reshape(1, 3)
+            hi_crop = np.array(hi_crop).reshape(1, 3)
+            mask = np.logical_and(lo_crop <= points, points <= hi_crop)
+            mask = np.all(mask, axis=-1)
+
+            points = points[mask]
+            colors = colors[mask]
+
+        if n_sample is not None:
+            pass
+
+        return points, colors
 
     def step(self, u):
         action = u

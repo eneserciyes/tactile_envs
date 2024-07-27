@@ -35,6 +35,10 @@ def convert_observation_to_space(observation):
     return space
 
 
+def transform_points(P, T):
+    return (T[:3, :3] @ P.T).T + T[:3, 3]
+
+
 class InsertionEnv(gym.Env):
     def __init__(
         self,
@@ -623,10 +627,55 @@ class InsertionEnv(gym.Env):
                 self.sim, height=self.im_size, width=self.im_size
             )
         else:
-            self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
-            img = self.renderer.render() / 255
+            imgs = []
+            depths = []
+            for i in range(4):
+                self.renderer.update_scene(self.mj_data, camera=i)
+                img = self.renderer.render() / 255
+                imgs.append(img)
 
-        return img
+            self.renderer.enable_depth_rendering()
+            for i in range(4):
+                self.renderer.update_scene(self.mj_data, camera=i)
+                depth = self.renderer.render()
+                depths.append(depth)
+            self.renderer.disable_depth_rendering()
+
+        return imgs, depths
+
+    def render_pcd(self, imgs, depths, Ks, Ts):
+        merged_points = []
+        merged_colors = []
+        for img, depth, K, T in zip(imgs, depths, Ks, Ts):
+            points, colors = self.get_pcd(img, depth, K, T)
+            merged_points.append(points)
+            merged_colors.append(colors)
+
+        return np.concatenate(merged_points, axis=0), np.concatenate(
+            merged_colors, axis=0
+        )
+
+    def get_pcd(self, img, depth, K, T):
+        H, W, _ = img.shape
+        u, v = np.meshgrid(np.arange(W), np.arange(H))
+
+        u = u.flatten()
+        v = v.flatten()
+        depth = depth.flatten()
+
+        fx, fy = K[0, 0], K[1, 1]
+        cx, cy = K[0, 2], K[1, 2]
+
+        X = (u - cx) * depth / fx
+        Y = (v - cy) * depth / fy
+        Z = depth
+
+        points = np.vstack((X, Y, Z)).T
+        colors = img.reshape(-1, 3)
+
+        points_world = transform_points(points, T)
+
+        return points_world, colors
 
     def step(self, u):
         action = u

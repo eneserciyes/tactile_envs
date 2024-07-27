@@ -5,9 +5,10 @@ import gymnasium as gym
 
 import mujoco
 
+import torch
+import pytorch3d.ops as torch3d
 import numpy as np
 from gymnasium import spaces
-import cv2
 
 from pathlib import Path
 
@@ -597,6 +598,7 @@ class InsertionEnv(gym.Env):
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
+            pcd = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -607,6 +609,7 @@ class InsertionEnv(gym.Env):
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
             self.curr_obs = {
                 "image": img,
+                "pcd": pcd,
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
@@ -627,23 +630,12 @@ class InsertionEnv(gym.Env):
                 self.sim, height=self.im_size, width=self.im_size
             )
         else:
-            imgs = []
-            depths = []
-            for i in range(4):
-                self.renderer.update_scene(self.mj_data, camera=i)
-                img = self.renderer.render() / 255
-                imgs.append(img)
+            self.renderer.update_scene(self.mj_data, camera=self.camera_idx)
+            img = self.renderer.render() / 255
 
-            self.renderer.enable_depth_rendering()
-            for i in range(4):
-                self.renderer.update_scene(self.mj_data, camera=i)
-                depth = self.renderer.render()
-                depths.append(depth)
-            self.renderer.disable_depth_rendering()
+        return img
 
-        return imgs, depths
-
-    def render_pcd(self, lo_crop, hi_crop):
+    def render_pcd(self, lo_crop=(-1, -1, 0.05), hi_crop=(1, 1, 1)):
         # render images, depths
         imgs = []
         depths = []
@@ -670,9 +662,7 @@ class InsertionEnv(gym.Env):
             merged_points.append(points)
             merged_colors.append(colors)
 
-        return np.concatenate(merged_points, axis=0), np.concatenate(
-            merged_colors, axis=0
-        )
+        return torch.cat(merged_points, dim=0), torch.cat(merged_colors, dim=0)
 
     def get_cam_info(self, img_size=256):
         cam_intrinsics = []
@@ -698,8 +688,6 @@ class InsertionEnv(gym.Env):
         return cam_intrinsics, cam_extrinsics
 
     def get_pcd(self, img, depth, K, T, lo_crop=None, hi_crop=None, n_sample=None):
-        # TODO: implement sampling
-
         # img : (H, W, 3)
         H, W, _ = img.shape
         u, v = np.meshgrid(np.arange(W), np.arange(H))
@@ -729,8 +717,15 @@ class InsertionEnv(gym.Env):
             points = points[mask]
             colors = colors[mask]
 
+        points = torch.from_numpy(points)
+        colors = torch.from_numpy(colors)
         if n_sample is not None:
-            pass
+            _, sample_mask = torch3d.sample_farthest_points(
+                points.unsqueeze(0), K=n_sample
+            )
+            sample_mask = sample_mask[0]
+            points = points[sample_mask]
+            colors = colors[sample_mask]
 
         return points, colors
 
@@ -856,6 +851,7 @@ class InsertionEnv(gym.Env):
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
+            pcd = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -866,6 +862,7 @@ class InsertionEnv(gym.Env):
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
             self.curr_obs = {
                 "image": img,
+                "pcd": pcd,
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,

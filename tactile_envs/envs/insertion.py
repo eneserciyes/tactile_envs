@@ -16,7 +16,7 @@ from pathlib import Path
 def convert_observation_to_space(observation):
     space = spaces.Dict(spaces={})
     for key in observation.keys():
-        if key == "image":
+        if key == "image" or key == "colors":
             space.spaces[key] = spaces.Box(
                 low=0, high=1, shape=observation[key].shape, dtype=np.float64
             )
@@ -25,6 +25,7 @@ def convert_observation_to_space(observation):
             or key == "state"
             or key == "proprioceptive"
             or key == "privileged"
+            or key == "points"
         ):
             space.spaces[key] = spaces.Box(
                 low=-float("inf"),
@@ -50,6 +51,7 @@ class InsertionEnv(gym.Env):
         symlog_tactile=True,
         env_id=-1,
         im_size=64,
+        n_points=1024,
         tactile_shape=(32, 32),
         skip_frame=10,
         max_delta=None,
@@ -120,6 +122,7 @@ class InsertionEnv(gym.Env):
         self.tactile_comps = 3
 
         self.im_size = im_size
+        self.n_points = n_points
 
         self.state_type = state_type
 
@@ -154,6 +157,8 @@ class InsertionEnv(gym.Env):
         elif self.state_type == "full":
             self.curr_obs = {
                 "image": np.zeros((self.im_size, self.im_size, 3)),
+                "points": np.zeros((self.n_points, 3)),
+                "colors": np.zeros((self.n_points, 3)),
                 "tactile": np.zeros(
                     (2 * self.tactile_comps, self.tactile_rows, self.tactile_cols)
                 ),
@@ -598,7 +603,7 @@ class InsertionEnv(gym.Env):
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            pcd = self.render_pcd()
+            points, colors = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -609,7 +614,8 @@ class InsertionEnv(gym.Env):
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
             self.curr_obs = {
                 "image": img,
-                "pcd": pcd,
+                "points": points,
+                "colors": colors,
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
@@ -635,7 +641,7 @@ class InsertionEnv(gym.Env):
 
         return img
 
-    def render_pcd(self, lo_crop=(-1, -1, 0.05), hi_crop=(1, 1, 1)):
+    def render_pcd(self, lo_crop=(-1, -1, 0.01), hi_crop=(1, 1, 1)):
         # render images, depths
         imgs = []
         depths = []
@@ -655,14 +661,25 @@ class InsertionEnv(gym.Env):
         Ks, Ts = self.get_cam_info(self.im_size)
 
         # generate pcds and merge
-        merged_points = []
-        merged_colors = []
+        points = []
+        colors = []
         for img, depth, K, T in zip(imgs, depths, Ks, Ts):
-            points, colors = self.get_pcd(img, depth, K, T, lo_crop, hi_crop)
-            merged_points.append(points)
-            merged_colors.append(colors)
+            p, c = self.get_pcd(img, depth, K, T, lo_crop, hi_crop)
+            points.append(p)
+            colors.append(c)
 
-        return torch.cat(merged_points, dim=0), torch.cat(merged_colors, dim=0)
+        points = torch.cat(points, dim=0)
+        colors = torch.cat(colors, dim=0)
+
+        # Sample with FPS
+        _, sample_mask = torch3d.sample_farthest_points(
+            points.unsqueeze(0), K=self.n_points
+        )
+        sample_mask = sample_mask[0]
+        points = points[sample_mask]
+        colors = colors[sample_mask]
+
+        return points, colors
 
     def get_cam_info(self, img_size=256):
         cam_intrinsics = []
@@ -719,13 +736,6 @@ class InsertionEnv(gym.Env):
 
         points = torch.from_numpy(points)
         colors = torch.from_numpy(colors)
-        if n_sample is not None:
-            _, sample_mask = torch3d.sample_farthest_points(
-                points.unsqueeze(0), K=n_sample
-            )
-            sample_mask = sample_mask[0]
-            points = points[sample_mask]
-            colors = colors[sample_mask]
 
         return points, colors
 
@@ -851,7 +861,7 @@ class InsertionEnv(gym.Env):
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
             img = self.render()
-            pcd = self.render_pcd()
+            points, colors = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -862,7 +872,8 @@ class InsertionEnv(gym.Env):
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
             self.curr_obs = {
                 "image": img,
-                "pcd": pcd,
+                "points": points,
+                "colors": colors,
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,

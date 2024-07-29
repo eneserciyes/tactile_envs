@@ -27,7 +27,7 @@ def convert_observation_to_space(observation):
             or key == "proprioceptive"
             or key == "privileged"
             or key == "points"
-            or key == "pad"
+            or key == "pad_transform"
         ):
             space.spaces[key] = spaces.Box(
                 low=-float("inf"),
@@ -166,7 +166,7 @@ class InsertionEnv(gym.Env):
                 ),
                 "privileged": np.zeros(8),
                 "proprioceptive": np.zeros(7),
-                "pad": np.zeros((2, 4, 4)),
+                "pad_transform": np.zeros((2, 4, 4)),
             }
         else:
             raise ValueError("Invalid state type")
@@ -631,7 +631,7 @@ class InsertionEnv(gym.Env):
                 self.action_scale[:3, 1] - self.action_scale[:3, 0]
             ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
-            pad = self.get_pad_transformations()
+            pad_transform = self.get_pad_transforms()
 
             self.curr_obs = {
                 "image": img,
@@ -640,7 +640,7 @@ class InsertionEnv(gym.Env):
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
-                "pad": pad,
+                "pad_transform": pad_transform,
             }
 
         info = {"id": np.array([self.id])}
@@ -761,7 +761,7 @@ class InsertionEnv(gym.Env):
 
         return points, colors
 
-    def get_pad_transformations(self):
+    def get_pad_transforms(self):
         T1 = np.eye(4)
         T1[:3, :3] = self.mj_data.body("left_silicone_pad").xmat.copy().reshape((3, 3))
         T1[:3, 3:] = self.mj_data.body("left_silicone_pad").xpos.copy().reshape((3, 1))
@@ -903,7 +903,7 @@ class InsertionEnv(gym.Env):
                 self.action_scale[:3, 1] - self.action_scale[:3, 0]
             ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
-            pad = self.get_pad_transformations()
+            pad_transform = self.get_pad_transforms()
             self.curr_obs = {
                 "image": img,
                 "points": points,
@@ -911,7 +911,7 @@ class InsertionEnv(gym.Env):
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
-                "pad": pad,
+                "pad_transform": pad_transform,
             }
             info = {"id": np.array([self.id])}
 

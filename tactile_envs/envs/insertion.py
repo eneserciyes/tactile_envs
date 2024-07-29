@@ -209,7 +209,6 @@ class InsertionEnv(gym.Env):
             ]
         )  # for absolute control
 
-        self.tactile_points = self.get_tactile_points()
         self.action_mask = np.ones(5, dtype=bool)
         if no_rotation:
             self.action_mask[3] = False
@@ -244,21 +243,6 @@ class InsertionEnv(gym.Env):
             + "/"
             + self.xml_content[file_start_idx:]
         )
-
-    def get_tactile_points(self):
-        dx, dz = 32, 32
-        size_x = 0.011 / dx
-        size_z = 0.01875 / dz
-        pos_y = -0.0026
-
-        tactile_points = []
-        for i in range(dz):
-            pos_z = size_z + 2 * size_z * i
-            for j in range(dx):
-                pos_x = -0.011 + size_x + 2 * size_x * j
-                tactile_points.append(np.array([pos_x, pos_y, pos_z]))
-
-        return np.array(tactile_points, dtype=np.float32)
 
     def edit_xml(self):
         holders = self.holders

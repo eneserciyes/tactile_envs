@@ -166,7 +166,7 @@ class InsertionEnv(gym.Env):
                 ),
                 "privileged": np.zeros(8),
                 "proprioceptive": np.zeros(7),
-                "pad": np.zeros(24),
+                "pad": np.zeros((2, 4, 4)),
             }
         else:
             raise ValueError("Invalid state type")
@@ -745,15 +745,14 @@ class InsertionEnv(gym.Env):
         return points, colors
 
     def get_pad_cart_pos(self):
-        pads = np.concatenate(
-            (
-                self.mj_data.body("left_silicone_pad").xpos.copy(),
-                self.mj_data.body("left_silicone_pad").xmat.copy(),
-                self.mj_data.body("right_silicone_pad").xpos.copy(),
-                self.mj_data.body("right_silicone_pad").xmat.copy(),
-            ),
-            axis=0,
-        )
+        T1 = np.eye(4)
+        T1[:3, :3] = self.mj_data.body("left_silicone_pad").xmat.copy().reshape((3, 3))
+        T1[:3, 3:] = self.mj_data.body("left_silicone_pad").xpos.copy().reshape((3, 1))
+
+        T2 = np.eye(4)
+        T2[:3, :3] = self.mj_data.body("right_silicone_pad").xmat.copy().reshape((3, 3))
+        T2[:3, 3:] = self.mj_data.body("right_silicone_pad").xpos.copy().reshape((3, 1))
+        pads = np.stack((T1, T2), axis=0)
         return pads
 
     def step(self, u):

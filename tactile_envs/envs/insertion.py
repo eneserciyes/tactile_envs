@@ -1,4 +1,5 @@
 import os
+import time
 import cv2
 
 import gymnasium as gym
@@ -26,6 +27,7 @@ def convert_observation_to_space(observation):
             or key == "proprioceptive"
             or key == "privileged"
             or key == "points"
+            or key == "pad"
         ):
             space.spaces[key] = spaces.Box(
                 low=-float("inf"),
@@ -164,6 +166,7 @@ class InsertionEnv(gym.Env):
                 ),
                 "privileged": np.zeros(8),
                 "proprioceptive": np.zeros(7),
+                "pad": np.zeros(24),
             }
         else:
             raise ValueError("Invalid state type")
@@ -602,8 +605,8 @@ class InsertionEnv(gym.Env):
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
-            img = self.render()
-            points, colors = self.render_pcd()
+            # img = self.render()
+            img, points, colors = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -612,6 +615,7 @@ class InsertionEnv(gym.Env):
                 self.action_scale[:3, 1] - self.action_scale[:3, 0]
             ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
+            pad = self.get_pad_cart_pos()
             self.curr_obs = {
                 "image": img,
                 "points": points,
@@ -619,6 +623,7 @@ class InsertionEnv(gym.Env):
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
+                "pad": pad,
             }
 
         info = {"id": np.array([self.id])}
@@ -673,13 +678,13 @@ class InsertionEnv(gym.Env):
 
         # Sample with FPS
         _, sample_mask = torch3d.sample_farthest_points(
-            points.unsqueeze(0), K=self.n_points
+            points.unsqueeze(0).cuda(), K=self.n_points
         )
-        sample_mask = sample_mask[0]
+        sample_mask = sample_mask[0].cpu()
         points = points[sample_mask]
         colors = colors[sample_mask]
 
-        return points, colors
+        return imgs[self.camera_idx], points, colors
 
     def get_cam_info(self, img_size=256):
         cam_intrinsics = []
@@ -738,6 +743,18 @@ class InsertionEnv(gym.Env):
         colors = torch.from_numpy(colors)
 
         return points, colors
+
+    def get_pad_cart_pos(self):
+        pads = np.concatenate(
+            (
+                self.mj_data.body("left_silicone_pad").xpos.copy(),
+                self.mj_data.body("left_silicone_pad").xmat.copy(),
+                self.mj_data.body("right_silicone_pad").xpos.copy(),
+                self.mj_data.body("right_silicone_pad").xmat.copy(),
+            ),
+            axis=0,
+        )
+        return pads
 
     def step(self, u):
         action = u
@@ -860,8 +877,8 @@ class InsertionEnv(gym.Env):
             tactiles = np.concatenate((tactiles_right, tactiles_left), axis=0)
             if self.symlog_tactile:
                 tactiles = np.sign(tactiles) * np.log(1 + np.abs(tactiles))
-            img = self.render()
-            points, colors = self.render_pcd()
+            # img = self.render()
+            img, points, colors = self.render_pcd()
             privileged = np.append(
                 self.mj_data.qpos.copy(), [self.offset_x, self.offset_y]
             )
@@ -870,6 +887,7 @@ class InsertionEnv(gym.Env):
                 self.action_scale[:3, 1] - self.action_scale[:3, 0]
             ) * 2 - 1
             assert np.all(proprioceptive >= -1.1) and np.all(proprioceptive <= 1.1)
+            pad = self.get_pad_cart_pos()
             self.curr_obs = {
                 "image": img,
                 "points": points,
@@ -877,6 +895,7 @@ class InsertionEnv(gym.Env):
                 "tactile": tactiles,
                 "privileged": privileged,
                 "proprioceptive": proprioceptive,
+                "pad": pad,
             }
             info = {"id": np.array([self.id])}
 
